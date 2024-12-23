@@ -1,10 +1,10 @@
 import streamlit as st
 from PIL import Image
 import requests
-import os
+from io import BytesIO
 
 # Constants
-BACKEND_URL = "http://localhost:8000"  # Update with the backend URL
+BACKEND_URL = "http://localhost:8000"
 
 # Component: Upload Image
 def upload_image():
@@ -22,10 +22,6 @@ def select_challenge():
     options = [
         "Challenge 1: Foundation Enhancement",
         "Challenge 2: Background Integration",
-        "Challenge 3: Text and Banner Integration",
-        "Challenge 4: Lifestyle Context Creation",
-        "Challenge 5: Advanced Composition",
-        "Apply All Challenges Sequentially"
     ]
     return st.sidebar.radio("Challenges", options)
 
@@ -38,43 +34,28 @@ def configure_parameters(challenge):
         shadows = st.checkbox("Add Shadows")
         return {"brightness": brightness, "contrast": contrast, "shadows": shadows}
     elif challenge == "Challenge 2: Background Integration":
-        background = st.selectbox("Select Background Type", ["Solid", "Gradient", "Studio", "Lifestyle"])
+        background = st.selectbox(
+            "Select Background Type", 
+            ["Solid Color", "Gradient", "Studio Setting", "Simple Lifestyle Context"]
+        )
         return {"background_type": background}
-    elif challenge == "Challenge 3: Text and Banner Integration":
-        banner_text = st.text_input("Enter Banner Text")
-        font_size = st.slider("Font Size", 10, 100, 30)
-        text_position = st.slider("Text Position (Height %)", 0, 100, 50)
-        return {"banner_text": banner_text, "font_size": font_size, "text_position": text_position}
-    elif challenge == "Challenge 4: Lifestyle Context Creation":
-        lifestyle_type = st.selectbox("Select Lifestyle Context", ["Kitchen", "Outdoors", "Office"])
-        return {"lifestyle_type": lifestyle_type}
-    elif challenge == "Challenge 5: Advanced Composition":
-        st.text("Advanced composition uses results from previous challenges.")
-        return {}
     return {}
 
 # Component: Display Results
-def display_results(image, log_path):
+def display_results(image=None, background_url=None):
     st.header("Enhanced Image")
+
     if image:
         st.image(image, caption="Processed Image", use_column_width=True)
-        st.download_button(
-            "Download Enhanced Image",
-            data=image.tobytes(),
-            file_name="enhanced_image.jpg",
-            mime="image/jpeg"
-        )
 
-    if log_path:
-        with open(log_path, "r") as log_file:
-            log_data = log_file.read()
-        st.text_area("Log Report", log_data, height=300)
-        st.download_button(
-            "Download Log Report",
-            data=log_data,
-            file_name="log_report.json",
-            mime="application/json"
-        )
+    if background_url:
+        st.subheader("Background Image")
+        response = requests.get(background_url, stream=True)
+        if response.status_code == 200:
+            background_image = Image.open(BytesIO(response.content))
+            st.image(background_image, caption="Generated Background", use_column_width=True)
+        else:
+            st.error("Failed to load background image.")
 
 # Main App Functionality
 def main():
@@ -94,19 +75,31 @@ def main():
         if st.button("Process Image"):
             with st.spinner("Processing..."):
                 files = {"file": uploaded_file.getvalue()}
-                response = requests.post(
-                    f"{BACKEND_URL}/process", 
-                    params={"challenge": selected_challenge}, 
-                    files=files, 
-                    data=params
-                )
-                if response.status_code == 200:
-                    result_data = response.json()
-                    processed_image = Image.open(requests.get(result_data["image_url"], stream=True).raw)
-                    log_path = result_data["log_url"]
-                    display_results(processed_image, log_path)
-                else:
-                    st.error("Processing failed. Please try again.")
+                response = None
+
+                if selected_challenge == "Challenge 2: Background Integration":
+                    response = requests.post(
+                        f"{BACKEND_URL}/process_backgrounds",
+                        files=files,
+                        params={"background_type": params["background_type"]}
+                    )
+                    if response.status_code == 200:
+                        result_data = response.json()
+                        display_results(background_url=result_data.get("background_url"))
+                    else:
+                        st.error("Processing failed.")
+                elif selected_challenge == "Challenge 1: Foundation Enhancement":
+                    response = requests.post(
+                        f"{BACKEND_URL}/process",
+                        files=files,
+                        data={"challenge": selected_challenge, **params}
+                    )
+                    if response.status_code == 200:
+                        result_data = response.json()
+                        processed_image = Image.open(requests.get(result_data["image_url"], stream=True).raw)
+                        display_results(image=processed_image)
+                    else:
+                        st.error("Processing failed.")
 
 if __name__ == "__main__":
     main()
