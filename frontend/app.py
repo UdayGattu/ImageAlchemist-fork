@@ -1,37 +1,100 @@
 import streamlit as st
-import requests
 from PIL import Image
+import requests
 from io import BytesIO
 
-BACKEND_URL = "http://127.0.0.1:8000"
+# Constants
+BACKEND_URL = "http://localhost:8000"
 
-st.title("Product Image Enhancement System")
+# Component: Upload Image
+def upload_image():
+    st.header("Upload Your Image")
+    uploaded_file = st.file_uploader("Choose an image file", type=["jpg", "png"])
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Image", use_column_width=True)
+        return uploaded_file, image
+    return None, None
 
-uploaded_file = st.file_uploader("Upload Product Image", type=["jpg", "png"])
+# Component: Challenge Selection
+def select_challenge():
+    st.sidebar.header("Select a Challenge")
+    options = [
+        "Challenge 1: Foundation Enhancement",
+        "Challenge 2: Background Integration",
+    ]
+    return st.sidebar.radio("Challenges", options)
 
-if uploaded_file:
-    # Display original image
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Original Image", use_container_width=True)
-    
-    if st.button("Enhance Image"):
-        with st.spinner("Enhancing product image..."):
-            files = {"file": uploaded_file.getvalue()}
-            
-            response = requests.post(
-                f"{BACKEND_URL}/process",
-                files=files
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                enhanced_image_url = result["image_url"]
-                enhanced_image_response = requests.get(enhanced_image_url, stream=True)
-                
-                if enhanced_image_response.status_code == 200:
-                    enhanced_image = Image.open(BytesIO(enhanced_image_response.content))
-                    st.image(enhanced_image, caption="Enhanced Image", use_container_width=True)
-                else:
-                    st.error("Failed to load enhanced image.")
-            else:
-                st.error("Image enhancement failed.")
+# Component: Configure Parameters
+def configure_parameters(challenge):
+    st.header("Set Parameters")
+    if challenge == "Challenge 2: Background Integration":
+        background = st.selectbox(
+            "Select Background Type", 
+            ["Solid Color", "Gradient", "Studio Setting", "Simple Lifestyle Context"]
+        )
+        return {"background_type": background}
+    return {}
+
+# Component: Display Results
+def display_results(image=None, background_url=None):
+    st.header("Enhanced Image")
+
+    if image:
+        st.image(image, caption="Processed Image", use_column_width=True)
+
+    if background_url:
+        st.subheader("Background Image")
+        response = requests.get(background_url, stream=True)
+        if response.status_code == 200:
+            background_image = Image.open(BytesIO(response.content))
+            st.image(background_image, caption="Generated Background", use_column_width=True)
+        else:
+            st.error("Failed to load background image.")
+
+# Main App Functionality
+def main():
+    st.title("Image Enhancement System")
+
+    # Upload Image
+    uploaded_file, image = upload_image()
+
+    if uploaded_file and image:
+        # Challenge Selection
+        selected_challenge = select_challenge()
+
+        # Configure Parameters
+        params = configure_parameters(selected_challenge)
+
+        # Process Image
+        if st.button("Process Image"):
+            with st.spinner("Processing..."):
+                files = {"file": uploaded_file.getvalue()}
+                response = None
+
+                if selected_challenge == "Challenge 2: Background Integration":
+                    response = requests.post(
+                        f"{BACKEND_URL}/process_backgrounds",
+                        files=files,
+                        params={"background_type": params["background_type"]}
+                    )
+                    if response.status_code == 200:
+                        result_data = response.json()
+                        display_results(background_url=result_data.get("background_url"))
+                    else:
+                        st.error("Processing failed.")
+                elif selected_challenge == "Challenge 1: Foundation Enhancement":
+                    response = requests.post(
+                        f"{BACKEND_URL}/process",
+                        files=files,
+                        data={"challenge": selected_challenge}
+                    )
+                    if response.status_code == 200:
+                        result_data = response.json()
+                        processed_image = Image.open(requests.get(result_data["image_url"], stream=True).raw)
+                        display_results(image=processed_image)
+                    else:
+                        st.error("Processing failed.")
+
+if __name__ == "__main__":
+    main()
