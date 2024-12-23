@@ -107,3 +107,5 @@ async def process_backgrounds(request: Request, file: UploadFile = File(...), ba
     except Exception as e:
         logging.error(f"Error during processing: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+#fnf
