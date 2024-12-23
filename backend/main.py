@@ -6,7 +6,7 @@ import os
 import uuid
 import cv2
 from challenge_2 import generate_background_variation
-
+from challenge_1 import *
 
 app = FastAPI()
 
