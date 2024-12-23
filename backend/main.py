@@ -1,102 +1,72 @@
-from fastapi import FastAPI, File, UploadFile, Form
+import logging
+from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.responses import JSONResponse
-from PIL import Image
+from fastapi.staticfiles import StaticFiles
 import os
 import uuid
-import json
+import cv2
+from challenge_1 import detect_object, extract_features, query_llm, enhance_image
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Directories
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
 UPLOAD_DIR = "storage/uploads"
 PROCESSED_DIR = "storage/processed"
-LOG_DIR = "storage/logs"
-
-# Ensure directories exist
+STATIC_DIR = "storage"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
 
-# Utility to write log file
-def write_log(file_id, challenge, log_data):
-    log_file_path = os.path.join(LOG_DIR, f"{file_id}_{challenge}.json")
-    with open(log_file_path, "w") as log_file:
-        json.dump(log_data, log_file, indent=4)
-    return log_file_path
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.post("/process")
-async def process_image(
-    challenge: str = Form(...),
-    file: UploadFile = File(...),
-    brightness: float = Form(1.0),
-    contrast: float = Form(1.0),
-    shadows: bool = Form(False),
-    background_type: str = Form(None),
-    banner_text: str = Form(None),
-    font_size: int = Form(None),
-    text_position: int = Form(None),
-    lifestyle_type: str = Form(None)
-):
+async def process_image(request: Request, file: UploadFile = File(...)):
     try:
+        logging.info("File upload received.")
+        
         # Save uploaded file
         file_id = str(uuid.uuid4())
-        original_file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
-        with open(original_file_path, "wb") as buffer:
+        upload_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
+        with open(upload_path, "wb") as buffer:
             buffer.write(await file.read())
+        logging.info(f"File saved at {upload_path}")
 
-        # Load image for processing
-        image = Image.open(original_file_path)
+        # Load and process image
+        image = cv2.imread(upload_path)
+        if image is None:
+            raise ValueError("Invalid image file")
+        logging.info(f"Image loaded successfully. Shape: {image.shape}")
 
-        # Pass to challenge-specific function
-        if challenge == "Challenge 1: Foundation Enhancement":
-            from challenge_1 import foundation_enhancement
-            processed_image, log_data = foundation_enhancement(
-                image, brightness, contrast, shadows
-            )
-        elif challenge == "Challenge 2: Background Integration":
-            from challenge_2 import background_integration
-            processed_image, log_data = background_integration(image, background_type)
-        elif challenge == "Challenge 3: Text and Banner Integration":
-            from challenge_3 import text_banner_integration
-            processed_image, log_data = text_banner_integration(
-                image, banner_text, font_size, text_position
-            )
-        elif challenge == "Challenge 4: Lifestyle Context Creation":
-            from challenge_4 import lifestyle_context
-            processed_image, log_data = lifestyle_context(image, lifestyle_type)
-        elif challenge == "Challenge 5: Advanced Composition":
-            from challenge_5 import advanced_composition
-            processed_image, log_data = advanced_composition(image)
-        else:
-            return JSONResponse(
-                status_code=400, content={"error": "Invalid challenge selected"}
-            )
+        # Detect product and get bbox
+        bbox, cropped = detect_object(image)
+        logging.info(f"Product detected with bounding box: {bbox}")
 
-        # Save processed image
-        processed_file_path = os.path.join(PROCESSED_DIR, f"{file_id}_{challenge}.jpg")
-        processed_image.save(processed_file_path)
+        # Extract image features
+        features = extract_features(cropped)
+        logging.info(f"Extracted features: {features}")
 
-        # Write log file
-        log_file_path = write_log(file_id, challenge, log_data)
+        # Get enhancement parameters from LLM
+        recommendations = query_llm(features)
+        logging.info(f"Received enhancement recommendations: {recommendations}")
 
-        # Return paths to frontend
-        return {
-            "image_url": processed_file_path,
-            "log_url": log_file_path
-        }
+        # Enhance image
+        enhanced_image = enhance_image(image, bbox, recommendations)
+        logging.info("Image enhancement complete.")
+
+        # Save enhanced image
+        output_path = os.path.join(PROCESSED_DIR, f"{file_id}_enhanced.jpg")
+        cv2.imwrite(output_path, enhanced_image, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        logging.info(f"Enhanced image saved at {output_path}")
+
+        # Return image URL
+        base_url = str(request.base_url).rstrip("/")
+        image_url = f"{base_url}/static/processed/{os.path.basename(output_path)}"
+        return {"image_url": image_url}
 
     except Exception as e:
-        error_log = {
-            "error": str(e),
-            "challenge": challenge,
-            "file": file.filename
-        }
-        log_file_path = write_log(str(uuid.uuid4()), challenge, error_log)
-        return JSONResponse(
-            status_code=500, content={"error": str(e), "log_url": log_file_path}
-        )
-
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Image Enhancement Backend"}
+        logging.error(f"Error during processing: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
